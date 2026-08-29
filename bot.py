@@ -48,7 +48,7 @@ DB_FILE = "books.db"
 
 if not TOKEN:
     raise RuntimeError(
-        "BOT_TOKEN не найден в Render Environment Variables"
+        "BOT_TOKEN не найден в Environment Variables"
     )
 
 
@@ -111,7 +111,7 @@ def init_db():
 
 
 # ============================================================
-# BOOK DATABASE FUNCTIONS
+# BOOK FUNCTIONS
 # ============================================================
 
 def add_book(
@@ -385,7 +385,7 @@ def get_favorites(user_id):
 
 
 # ============================================================
-# PENDING BOOKS
+# PENDING
 # ============================================================
 
 def add_pending(
@@ -400,12 +400,7 @@ def add_pending(
     cursor = conn.execute(
         """
         INSERT INTO pending_books
-        (
-            user_id,
-            username,
-            file_id,
-            file_name
-        )
+        (user_id, username, file_id, file_name)
         VALUES (?, ?, ?, ?)
         """,
         (
@@ -542,26 +537,6 @@ def home_button():
     )
 
 
-def catalog_button():
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text="⬅️ Каталог",
-                    callback_data="catalog"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    text="🏠 Главное меню",
-                    callback_data="home"
-                )
-            ]
-        ]
-    )
-
-
 def book_menu(book_id, user_id):
 
     buttons = [
@@ -591,10 +566,6 @@ def book_menu(book_id, user_id):
             )
         ])
 
-    # ========================================================
-    # АДМИНСКИЕ КНОПКИ
-    # ========================================================
-
     if user_id == ADMIN_ID:
 
         buttons.append([
@@ -623,34 +594,45 @@ def book_menu(book_id, user_id):
     )
 
 
+def category_keyboard(prefix):
+
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=category,
+                    callback_data=f"{prefix}:{i}"
+                )
+            ]
+            for i, category in enumerate(CATEGORIES)
+        ]
+    )
+
+
 # ============================================================
-# EDIT STATES
+# STATES
 # ============================================================
 
-class EditBookState(StatesGroup):
+class SuggestState(StatesGroup):
+    waiting_file = State()
 
+
+class SearchState(StatesGroup):
+    waiting = State()
+
+
+class AddBookState(StatesGroup):
     waiting_title = State()
     waiting_author = State()
     waiting_category = State()
     waiting_description = State()
 
 
-# ============================================================
-# SUGGEST STATE
-# ============================================================
-
-class SuggestState(StatesGroup):
-
-    waiting_file = State()
-
-
-# ============================================================
-# SEARCH STATE
-# ============================================================
-
-class SearchState(StatesGroup):
-
-    waiting = State()
+class EditBookState(StatesGroup):
+    waiting_title = State()
+    waiting_author = State()
+    waiting_category = State()
+    waiting_description = State()
 
 
 # ============================================================
@@ -675,7 +657,9 @@ async def start(message: Message):
 # ============================================================
 
 @dp.callback_query(F.data == "home")
-async def home(callback: CallbackQuery):
+async def home(callback: CallbackQuery, state: FSMContext):
+
+    await state.clear()
 
     await callback.message.edit_text(
         "📚 <b>Rauda Ilm</b>\n\n"
@@ -701,8 +685,10 @@ async def about(callback: CallbackQuery):
         "📚 Книги\n"
         "🔎 Поиск\n"
         "⭐ Избранное\n"
-        "📤 Предложение книг пользователями\n"
-        "✅ Модерация книг",
+        "📤 Предложение книг\n"
+        "📢 Добавление из канала\n"
+        "✏️ Редактирование\n"
+        "🗑 Удаление",
         parse_mode="HTML",
         reply_markup=home_button()
     )
@@ -711,14 +697,16 @@ async def about(callback: CallbackQuery):
 
 
 # ============================================================
-# SUGGEST BOOK
+# SUGGEST
 # ============================================================
 
 @dp.callback_query(F.data == "suggest")
-async def suggest_book(
+async def suggest(
     callback: CallbackQuery,
     state: FSMContext
 ):
+
+    await state.clear()
 
     await state.set_state(
         SuggestState.waiting_file
@@ -726,10 +714,9 @@ async def suggest_book(
 
     await callback.message.edit_text(
         "📤 <b>Предложить книгу</b>\n\n"
-        "Отправьте мне PDF-файл книги.\n\n"
+        "Отправьте PDF-файл книги.\n\n"
         "После этого файл попадёт "
-        "администратору на модерацию.\n\n"
-        "❗ Отправляйте именно PDF-файл.",
+        "администратору на модерацию.",
         parse_mode="HTML",
         reply_markup=home_button()
     )
@@ -738,7 +725,7 @@ async def suggest_book(
 
 
 @dp.message(SuggestState.waiting_file)
-async def receive_suggested_book(
+async def receive_suggest(
     message: Message,
     state: FSMContext
 ):
@@ -758,8 +745,7 @@ async def receive_suggested_book(
     if not file_name.lower().endswith(".pdf"):
 
         await message.answer(
-            "❌ Это не PDF.\n\n"
-            "Отправьте файл с расширением .pdf."
+            "❌ Принимаю только PDF."
         )
 
         return
@@ -780,7 +766,7 @@ async def receive_suggested_book(
     await state.clear()
 
     await message.answer(
-        "✅ <b>Книга отправлена на модерацию!</b>\n\n"
+        "✅ <b>Книга отправлена!</b>\n\n"
         "Администратор проверит её.",
         parse_mode="HTML",
         reply_markup=main_menu()
@@ -816,12 +802,13 @@ async def receive_suggested_book(
 
 
 # ============================================================
-# ADMIN APPROVE
+# APPROVE
 # ============================================================
 
 @dp.callback_query(F.data.startswith("approve:"))
-async def approve_book(
-    callback: CallbackQuery
+async def approve(
+    callback: CallbackQuery,
+    state: FSMContext
 ):
 
     if callback.from_user.id != ADMIN_ID:
@@ -848,75 +835,198 @@ async def approve_book(
 
         return
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=category,
-                    callback_data=f"setcat:{pending_id}:{i}"
-                )
-            ]
-            for i, category in enumerate(CATEGORIES)
-        ]
+    await state.clear()
+
+    await state.update_data(
+        pending_id=pending_id
     )
 
+    await state.set_state(
+        AddBookState.waiting_title
+    )
+
+    default_title = os.path.splitext(
+        pending[4]
+    )[0]
+
     await callback.message.answer(
-        "📂 <b>Выберите раздел для книги:</b>",
-        parse_mode="HTML",
-        reply_markup=keyboard
+        "✏️ <b>Название книги</b>\n\n"
+        f"Название из файла:\n"
+        f"<b>{default_title}</b>\n\n"
+        "Введите правильное название.\n"
+        "Если подходит название из файла — "
+        "отправьте его ещё раз.",
+        parse_mode="HTML"
     )
 
     await callback.answer()
 
 
 # ============================================================
-# SET CATEGORY
+# ADD BOOK — TITLE
 # ============================================================
 
-@dp.callback_query(F.data.startswith("setcat:"))
-async def set_category(
-    callback: CallbackQuery
+@dp.message(AddBookState.waiting_title)
+async def add_title(
+    message: Message,
+    state: FSMContext
 ):
 
-    if callback.from_user.id != ADMIN_ID:
+    if message.from_user.id != ADMIN_ID:
+        return
 
-        await callback.answer(
-            "⛔ Нет доступа.",
-            show_alert=True
+    if not message.text:
+
+        await message.answer(
+            "Введите название книги."
         )
 
         return
 
-    _, pending_id, category_index = callback.data.split(":")
+    title = message.text.strip()
 
-    pending_id = int(pending_id)
-    category_index = int(category_index)
+    await state.update_data(
+        title=title
+    )
+
+    await state.set_state(
+        AddBookState.waiting_author
+    )
+
+    await message.answer(
+        "✍️ <b>Автор</b>\n\n"
+        "Введите имя автора.\n\n"
+        "Если автор неизвестен — "
+        "напишите <code>Не указан</code>.",
+        parse_mode="HTML"
+    )
+
+
+# ============================================================
+# ADD BOOK — AUTHOR
+# ============================================================
+
+@dp.message(AddBookState.waiting_author)
+async def add_author(
+    message: Message,
+    state: FSMContext
+):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    author = (
+        message.text.strip()
+        if message.text
+        else "Не указан"
+    )
+
+    await state.update_data(
+        author=author
+    )
+
+    await state.set_state(
+        AddBookState.waiting_category
+    )
+
+    await message.answer(
+        "📂 <b>Выберите категорию:</b>",
+        parse_mode="HTML",
+        reply_markup=category_keyboard("addcat")
+    )
+
+
+# ============================================================
+# ADD BOOK — CATEGORY
+# ============================================================
+
+@dp.callback_query(
+    AddBookState.waiting_category,
+    F.data.startswith("addcat:")
+)
+async def add_category(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+
+    if callback.from_user.id != ADMIN_ID:
+        return
+
+    index = int(
+        callback.data.split(":")[1]
+    )
+
+    if index >= len(CATEGORIES):
+        await callback.answer(
+            "Категория не найдена.",
+            show_alert=True
+        )
+        return
+
+    category = CATEGORIES[index]
+
+    await state.update_data(
+        category=category
+    )
+
+    await state.set_state(
+        AddBookState.waiting_description
+    )
+
+    await callback.message.edit_text(
+        "📝 <b>Описание</b>\n\n"
+        "Введите описание книги.\n\n"
+        "Если описание не нужно — "
+        "напишите <code>нет</code>.",
+        parse_mode="HTML"
+    )
+
+    await callback.answer()
+
+
+# ============================================================
+# ADD BOOK — DESCRIPTION
+# ============================================================
+
+@dp.message(AddBookState.waiting_description)
+async def add_description(
+    message: Message,
+    state: FSMContext
+):
+
+    if message.from_user.id != ADMIN_ID:
+        return
+
+    description = (
+        message.text.strip()
+        if message.text
+        else ""
+    )
+
+    if description.lower() == "нет":
+        description = ""
+
+    data = await state.get_data()
+
+    pending_id = data["pending_id"]
 
     pending = get_pending(pending_id)
 
     if not pending:
 
-        await callback.answer(
-            "Заявка уже обработана.",
-            show_alert=True
+        await state.clear()
+
+        await message.answer(
+            "❌ Заявка уже обработана.",
+            reply_markup=main_menu()
         )
 
         return
 
-    category = CATEGORIES[category_index]
-
-    file_name = pending[4]
-
-    title = os.path.splitext(file_name)[0]
-
-    author = "Не указан"
-
-    description = ""
-
     book_id = add_book(
-        title=title,
-        author=author,
-        category=category,
+        title=data["title"],
+        author=data["author"],
+        category=data["category"],
         description=description,
         file_id=pending[3]
     )
@@ -925,35 +1035,41 @@ async def set_category(
 
     delete_pending(pending_id)
 
-    try:
+    await state.clear()
 
-        await bot.send_message(
-            user_id,
-            "🎉 <b>Ваша книга одобрена!</b>\n\n"
-            f"📖 <b>{title}</b>\n"
-            f"📂 {category}\n\n"
-            "Она добавлена в каталог Rauda Ilm.",
-            parse_mode="HTML"
-        )
-
-    except Exception as e:
-
-        print(
-            "USER NOTIFICATION ERROR:",
-            repr(e)
-        )
-
-    await callback.message.edit_text(
+    await message.answer(
         "✅ <b>Книга добавлена!</b>\n\n"
-        f"📖 {title}\n"
-        f"📂 {category}\n"
+        f"📖 <b>{data['title']}</b>\n"
+        f"✍️ {data['author']}\n"
+        f"📂 {data['category']}\n"
         f"🆔 ID: {book_id}",
-        parse_mode="HTML"
+        parse_mode="HTML",
+        reply_markup=book_menu(
+            book_id,
+            ADMIN_ID
+        )
     )
 
-    await callback.answer(
-        "Книга добавлена."
-    )
+    # Если книгу предложил пользователь
+    if user_id != ADMIN_ID:
+
+        try:
+
+            await bot.send_message(
+                user_id,
+                "🎉 <b>Ваша книга добавлена!</b>\n\n"
+                f"📖 <b>{data['title']}</b>\n"
+                f"✍️ {data['author']}\n"
+                f"📂 {data['category']}",
+                parse_mode="HTML"
+            )
+
+        except Exception as e:
+
+            print(
+                "USER NOTIFICATION ERROR:",
+                repr(e)
+            )
 
 
 # ============================================================
@@ -961,7 +1077,7 @@ async def set_category(
 # ============================================================
 
 @dp.callback_query(F.data.startswith("reject:"))
-async def reject_book(
+async def reject(
     callback: CallbackQuery
 ):
 
@@ -996,12 +1112,14 @@ async def reject_book(
 
     try:
 
-        await bot.send_message(
-            user_id,
-            "❌ <b>Книга отклонена.</b>\n\n"
-            f"📄 {file_name}",
-            parse_mode="HTML"
-        )
+        if user_id != ADMIN_ID:
+
+            await bot.send_message(
+                user_id,
+                "❌ <b>Книга отклонена.</b>\n\n"
+                f"📄 {file_name}",
+                parse_mode="HTML"
+            )
 
     except Exception as e:
 
@@ -1022,6 +1140,75 @@ async def reject_book(
 
 
 # ============================================================
+# ADMIN DIRECT PDF
+# ============================================================
+
+@dp.message(
+    AddBookState.waiting_title
+)
+async def dummy_add_handler(
+    message: Message,
+    state: FSMContext
+):
+    pass
+
+
+@dp.message(
+    F.document,
+    F.from_user.id == ADMIN_ID
+)
+async def admin_direct_pdf(
+    message: Message,
+    state: FSMContext
+):
+
+    # Если админ находится в другом FSM процессе,
+    # этот обработчик всё равно позволяет отправить новый PDF.
+
+    document = message.document
+
+    file_name = document.file_name or ""
+
+    if not file_name.lower().endswith(".pdf"):
+
+        await message.answer(
+            "❌ Принимаю только PDF."
+        )
+
+        return
+
+    pending_id = add_pending(
+        user_id=ADMIN_ID,
+        username="ADMIN",
+        file_id=document.file_id,
+        file_name=file_name
+    )
+
+    await state.clear()
+
+    await state.update_data(
+        pending_id=pending_id
+    )
+
+    await state.set_state(
+        AddBookState.waiting_title
+    )
+
+    default_title = os.path.splitext(
+        file_name
+    )[0]
+
+    await message.answer(
+        "📥 <b>PDF получен.</b>\n\n"
+        "Добавляем новую книгу.\n\n"
+        f"📄 Название файла:\n"
+        f"<b>{default_title}</b>\n\n"
+        "Введите название книги.",
+        parse_mode="HTML"
+    )
+
+
+# ============================================================
 # CHANNEL PDF
 # ============================================================
 
@@ -1029,6 +1216,14 @@ async def reject_book(
 async def channel_pdf(
     message: Message
 ):
+
+    print(
+        "CHANNEL POST:",
+        message.chat.id,
+        message.document.file_name
+        if message.document
+        else "NO DOCUMENT"
+    )
 
     if message.chat.id != CHANNEL_ID:
         return
@@ -1045,7 +1240,9 @@ async def channel_pdf(
 
     caption = message.caption or ""
 
-    title = os.path.splitext(file_name)[0]
+    title = os.path.splitext(
+        file_name
+    )[0]
 
     author = "Не указан"
 
@@ -1058,22 +1255,85 @@ async def channel_pdf(
         if ":" not in line:
             continue
 
-        key, value = line.split(":", 1)
+        key, value = line.split(
+            ":",
+            1
+        )
 
         key = key.strip().lower()
         value = value.strip()
 
-        if key == "название":
+        if key in (
+            "название",
+            "название книги"
+        ):
             title = value
 
         elif key == "автор":
             author = value
 
-        elif key == "категория":
-            category = value
+        elif key in (
+            "категория",
+            "раздел"
+        ):
+
+            # Ищем точное совпадение
+            for cat in CATEGORIES:
+
+                if value.lower() == cat.lower():
+
+                    category = cat
+                    break
+
+            # Если написали без emoji
+            else:
+
+                for cat in CATEGORIES:
+
+                    clean_cat = (
+                        cat.replace("📖 ", "")
+                        .replace("🕌 ", "")
+                        .replace("📚 ", "")
+                        .replace("📜 ", "")
+                        .replace("🌙 ", "")
+                        .replace("🗣 ", "")
+                        .replace("👨‍👩‍👧 ", "")
+                        .replace("👶 ", "")
+                        .replace("📕 ", "")
+                    )
+
+                    if value.lower() == clean_cat.lower():
+
+                        category = cat
+                        break
 
         elif key == "описание":
             description = value
+
+    # Защита от дубликата:
+    # проверяем file_id
+    conn = get_db()
+
+    exists = conn.execute(
+        """
+        SELECT id
+        FROM books
+        WHERE file_id = ?
+        LIMIT 1
+        """,
+        (document.file_id,)
+    ).fetchone()
+
+    conn.close()
+
+    if exists:
+
+        print(
+            "CHANNEL BOOK ALREADY EXISTS:",
+            exists[0]
+        )
+
+        return
 
     book_id = add_book(
         title=title,
@@ -1084,7 +1344,10 @@ async def channel_pdf(
     )
 
     print(
-        f"CHANNEL BOOK ADDED: {book_id} | {title}"
+        "CHANNEL BOOK ADDED:",
+        book_id,
+        title,
+        category
     )
 
 
@@ -1433,7 +1696,9 @@ async def category(
 
     category_name = CATEGORIES[index]
 
-    books = category_books(category_name)
+    books = category_books(
+        category_name
+    )
 
     if not books:
 
@@ -1479,7 +1744,7 @@ async def category(
 
 
 # ============================================================
-# NEW BOOKS
+# NEW
 # ============================================================
 
 @dp.callback_query(F.data == "new")
@@ -1542,6 +1807,8 @@ async def search_start(
     state: FSMContext
 ):
 
+    await state.clear()
+
     await state.set_state(
         SearchState.waiting
     )
@@ -1563,7 +1830,11 @@ async def search_result(
     state: FSMContext
 ):
 
-    text = message.text or ""
+    text = (
+        message.text.strip()
+        if message.text
+        else ""
+    )
 
     if not text:
 
@@ -1605,7 +1876,7 @@ async def search_result(
     ])
 
     await message.answer(
-        f"🔎 <b>Результаты поиска:</b> {text}",
+        f"🔎 <b>Результаты:</b> {text}",
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=buttons
@@ -1614,18 +1885,18 @@ async def search_result(
 
 
 # ============================================================
-# DELETE BOOK
+# DELETE
 # ============================================================
 
 @dp.callback_query(F.data.startswith("delete:"))
-async def delete_book_callback(
+async def delete_callback(
     callback: CallbackQuery
 ):
 
     if callback.from_user.id != ADMIN_ID:
 
         await callback.answer(
-            "⛔ У вас нет доступа.",
+            "⛔ Нет доступа.",
             show_alert=True
         )
 
@@ -1666,8 +1937,7 @@ async def delete_book_callback(
     await callback.message.edit_text(
         "⚠️ <b>Удалить книгу?</b>\n\n"
         f"📖 <b>{book[1]}</b>\n\n"
-        "Она будет удалена из каталога "
-        "и из избранного пользователей.\n\n"
+        "Книга будет удалена из каталога.\n"
         "PDF в канале останется.",
         parse_mode="HTML",
         reply_markup=keyboard
@@ -1728,6 +1998,41 @@ async def cancel_delete(
 ):
 
     if callback.from_user.id != ADMIN_ID:
+        return
+
+    book_id = int(
+        callback.data.split(":")[1]
+    )
+
+    book = get_book(book_id)
+
+    if not book:
+        return
+
+    await callback.message.edit_text(
+        f"📖 <b>{book[1]}</b>\n\n"
+        "Удаление отменено.",
+        parse_mode="HTML",
+        reply_markup=book_menu(
+            book_id,
+            ADMIN_ID
+        )
+    )
+
+    await callback.answer()
+
+
+# ============================================================
+# EDIT
+# ============================================================
+
+@dp.callback_query(F.data.startswith("edit:"))
+async def edit(
+    callback: CallbackQuery,
+    state: FSMContext
+):
+
+    if callback.from_user.id != ADMIN_ID:
 
         await callback.answer(
             "⛔ Нет доступа.",
@@ -1751,52 +2056,7 @@ async def cancel_delete(
 
         return
 
-    await callback.message.edit_text(
-        f"📖 <b>{book[1]}</b>\n\n"
-        "Удаление отменено.",
-        parse_mode="HTML",
-        reply_markup=book_menu(
-            book_id,
-            ADMIN_ID
-        )
-    )
-
-    await callback.answer()
-
-
-# ============================================================
-# EDIT BOOK
-# ============================================================
-
-@dp.callback_query(F.data.startswith("edit:"))
-async def edit_book(
-    callback: CallbackQuery,
-    state: FSMContext
-):
-
-    if callback.from_user.id != ADMIN_ID:
-
-        await callback.answer(
-            "⛔ У вас нет доступа.",
-            show_alert=True
-        )
-
-        return
-
-    book_id = int(
-        callback.data.split(":")[1]
-    )
-
-    book = get_book(book_id)
-
-    if not book:
-
-        await callback.answer(
-            "Книга не найдена.",
-            show_alert=True
-        )
-
-        return
+    await state.clear()
 
     await state.update_data(
         book_id=book_id
@@ -1807,11 +2067,10 @@ async def edit_book(
     )
 
     await callback.message.edit_text(
-        "✏️ <b>Редактирование книги</b>\n\n"
-        f"Текущее название:\n<b>{book[1]}</b>\n\n"
-        "Отправьте новое название.\n\n"
-        "Если хотите оставить прежнее — "
-        "отправьте его ещё раз.",
+        "✏️ <b>Редактирование</b>\n\n"
+        f"Текущее название:\n"
+        f"<b>{book[1]}</b>\n\n"
+        "Введите новое название.",
         parse_mode="HTML"
     )
 
@@ -1831,18 +2090,11 @@ async def edit_title(
     if message.from_user.id != ADMIN_ID:
         return
 
-    title = message.text.strip()
-
-    if not title:
-
-        await message.answer(
-            "Название не может быть пустым."
-        )
-
+    if not message.text:
         return
 
     await state.update_data(
-        title=title
+        title=message.text.strip()
     )
 
     data = await state.get_data()
@@ -1857,8 +2109,9 @@ async def edit_title(
 
     await message.answer(
         "✍️ <b>Автор</b>\n\n"
-        f"Текущий автор: <b>{book[2]}</b>\n\n"
-        "Отправьте нового автора.",
+        f"Текущий автор:\n"
+        f"<b>{book[2]}</b>\n\n"
+        "Введите нового автора.",
         parse_mode="HTML"
     )
 
@@ -1876,11 +2129,11 @@ async def edit_author(
     if message.from_user.id != ADMIN_ID:
         return
 
-    author = message.text.strip()
-
-    if not author:
-
-        author = "Не указан"
+    author = (
+        message.text.strip()
+        if message.text
+        else "Не указан"
+    )
 
     await state.update_data(
         author=author
@@ -1890,22 +2143,10 @@ async def edit_author(
         EditBookState.waiting_category
     )
 
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=category,
-                    callback_data=f"editcat:{i}"
-                )
-            ]
-            for i, category in enumerate(CATEGORIES)
-        ]
-    )
-
     await message.answer(
-        "📂 <b>Выберите новую категорию:</b>",
+        "📂 <b>Выберите категорию:</b>",
         parse_mode="HTML",
-        reply_markup=keyboard
+        reply_markup=category_keyboard("editcat")
     )
 
 
@@ -1929,10 +2170,11 @@ async def edit_category(
         callback.data.split(":")[1]
     )
 
-    category = CATEGORIES[index]
+    if index >= len(CATEGORIES):
+        return
 
     await state.update_data(
-        category=category
+        category=CATEGORIES[index]
     )
 
     await state.set_state(
@@ -1941,9 +2183,8 @@ async def edit_category(
 
     await callback.message.edit_text(
         "📝 <b>Описание</b>\n\n"
-        "Отправьте новое описание.\n\n"
-        "Если описание не нужно, отправьте:\n"
-        "<code>нет</code>",
+        "Введите новое описание.\n\n"
+        "Или напишите <code>нет</code>.",
         parse_mode="HTML"
     )
 
@@ -1963,7 +2204,11 @@ async def edit_description(
     if message.from_user.id != ADMIN_ID:
         return
 
-    description = message.text.strip()
+    description = (
+        message.text.strip()
+        if message.text
+        else ""
+    )
 
     if description.lower() == "нет":
         description = ""
@@ -1985,7 +2230,7 @@ async def edit_description(
     book = get_book(book_id)
 
     await message.answer(
-        "✅ <b>Книга успешно изменена!</b>\n\n"
+        "✅ <b>Книга изменена!</b>\n\n"
         f"📖 <b>{book[1]}</b>\n"
         f"✍️ {book[2]}\n"
         f"📂 {book[3]}\n\n"
@@ -2003,144 +2248,7 @@ async def edit_description(
 
 
 # ============================================================
-# ADMIN: ADD BOOK DIRECTLY
-# ============================================================
-
-@dp.message(
-    F.document,
-    F.from_user.id == ADMIN_ID
-)
-async def admin_direct_pdf(
-    message: Message
-):
-
-    document = message.document
-
-    file_name = document.file_name or ""
-
-    if not file_name.lower().endswith(".pdf"):
-
-        await message.answer(
-            "❌ Принимаю только PDF."
-        )
-
-        return
-
-    title = os.path.splitext(file_name)[0]
-
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                InlineKeyboardButton(
-                    text=category,
-                    callback_data=f"directcat:{i}:{document.file_id}"
-                )
-            ]
-            for i, category in enumerate(CATEGORIES)
-        ]
-    )
-
-    # Сохраняем временные данные в FSM
-    # через отдельный объект невозможно без state,
-    # поэтому отправляем файл админу обратно
-    # и предлагаем использовать канал или модерацию.
-    #
-    # Для прямой загрузки используем pending.
-
-    pending_id = add_pending(
-        user_id=ADMIN_ID,
-        username="ADMIN",
-        file_id=document.file_id,
-        file_name=file_name
-    )
-
-    await message.answer(
-        "📥 <b>PDF получен.</b>\n\n"
-        "Выберите категорию:",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [
-                    InlineKeyboardButton(
-                        text=category,
-                        callback_data=f"directcat:{pending_id}:{i}"
-                    )
-                ]
-                for i, category in enumerate(CATEGORIES)
-            ]
-        )
-    )
-
-
-# ============================================================
-# DIRECT ADMIN CATEGORY
-# ============================================================
-
-@dp.callback_query(F.data.startswith("directcat:"))
-async def direct_category(
-    callback: CallbackQuery
-):
-
-    if callback.from_user.id != ADMIN_ID:
-
-        await callback.answer(
-            "⛔ Нет доступа.",
-            show_alert=True
-        )
-
-        return
-
-    _, pending_id, category_index = callback.data.split(":")
-
-    pending_id = int(pending_id)
-    category_index = int(category_index)
-
-    pending = get_pending(pending_id)
-
-    if not pending:
-
-        await callback.answer(
-            "Файл уже обработан.",
-            show_alert=True
-        )
-
-        return
-
-    category = CATEGORIES[category_index]
-
-    title = os.path.splitext(
-        pending[4]
-    )[0]
-
-    book_id = add_book(
-        title=title,
-        author="Не указан",
-        category=category,
-        description="",
-        file_id=pending[3]
-    )
-
-    delete_pending(pending_id)
-
-    await callback.message.edit_text(
-        "✅ <b>Книга добавлена!</b>\n\n"
-        f"📖 {title}\n"
-        f"📂 {category}\n"
-        f"🆔 ID: {book_id}",
-        parse_mode="HTML",
-        reply_markup=book_menu(
-            book_id,
-            ADMIN_ID
-        )
-    )
-
-    await callback.answer(
-        "Книга добавлена."
-    )
-
-
-# ============================================================
-# HEALTH CHECK
+# HEALTH
 # ============================================================
 
 async def health(request):
@@ -2190,7 +2298,7 @@ async def telegram_webhook(request):
 
 
 # ============================================================
-# START WEB SERVER
+# SERVER
 # ============================================================
 
 async def start_web_server():
@@ -2239,15 +2347,21 @@ async def main():
 
     init_db()
 
-    # Удаляем старый webhook,
-    # чтобы установить правильный
     await bot.delete_webhook(
         drop_pending_updates=True
     )
 
     await bot.set_webhook(
         WEBHOOK_URL,
-        allowed_updates=dp.resolve_used_update_types()
+        allowed_updates=[
+            "message",
+            "callback_query",
+            "channel_post"
+        ]
+    )
+
+    print(
+        "================================="
     )
 
     print(
@@ -2257,6 +2371,15 @@ async def main():
     print(
         "Webhook:",
         WEBHOOK_URL
+    )
+
+    print(
+        "CHANNEL_ID:",
+        CHANNEL_ID
+    )
+
+    print(
+        "================================="
     )
 
     runner = await start_web_server()
