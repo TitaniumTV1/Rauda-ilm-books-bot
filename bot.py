@@ -1,6 +1,6 @@
 import os
-import asyncio
 import sqlite3
+import asyncio
 
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F
@@ -10,37 +10,62 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
+    Update,
 )
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.storage.memory import MemoryStorage
 
 
+# ============================================================
+# CONFIG
+# ============================================================
+
 TOKEN = os.getenv("BOT_TOKEN")
 
 ADMIN_ID = 7714575966
 CHANNEL_ID = -1002358647162
 
+PORT = int(os.getenv("PORT", "10000"))
+
+RENDER_URL = os.getenv(
+    "RENDER_EXTERNAL_URL",
+    "https://rauda-ilm-books-bot.onrender.com"
+)
+
+WEBHOOK_PATH = "/telegram/webhook"
+WEBHOOK_URL = RENDER_URL.rstrip("/") + WEBHOOK_PATH
+
+
 if not TOKEN:
-    raise RuntimeError("BOT_TOKEN not found")
+    raise RuntimeError("BOT_TOKEN environment variable is missing")
 
 
-bot = Bot(TOKEN)
-dp = Dispatcher(storage=MemoryStorage())
+# ============================================================
+# BOT
+# ============================================================
+
+bot = Bot(token=TOKEN)
+
+dp = Dispatcher(
+    storage=MemoryStorage()
+)
+
+
+# ============================================================
+# DATABASE
+# ============================================================
 
 DB_FILE = "books.db"
 
 
-# =====================================================
-# DATABASE
-# =====================================================
-
-def db():
+def get_db():
     return sqlite3.connect(DB_FILE)
 
 
 def init_db():
-    conn = db()
+
+    conn = get_db()
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS books (
@@ -66,10 +91,17 @@ def init_db():
     conn.close()
 
 
-def add_book(title, author, category, description, file_id):
-    conn = db()
+def add_book(
+    title,
+    author,
+    category,
+    description,
+    file_id
+):
 
-    cur = conn.execute(
+    conn = get_db()
+
+    cursor = conn.execute(
         """
         INSERT INTO books
         (title, author, category, description, file_id)
@@ -81,10 +113,10 @@ def add_book(title, author, category, description, file_id):
             category,
             description,
             file_id,
-        ),
+        )
     )
 
-    book_id = cur.lastrowid
+    book_id = cursor.lastrowid
 
     conn.commit()
     conn.close()
@@ -93,7 +125,8 @@ def add_book(title, author, category, description, file_id):
 
 
 def get_books():
-    conn = db()
+
+    conn = get_db()
 
     rows = conn.execute(
         """
@@ -109,15 +142,22 @@ def get_books():
 
 
 def get_book(book_id):
-    conn = db()
+
+    conn = get_db()
 
     row = conn.execute(
         """
-        SELECT id, title, author, category, description, file_id
+        SELECT
+            id,
+            title,
+            author,
+            category,
+            description,
+            file_id
         FROM books
         WHERE id = ?
         """,
-        (book_id,),
+        (book_id,)
     ).fetchone()
 
     conn.close()
@@ -126,11 +166,16 @@ def get_book(book_id):
 
 
 def search_books(text):
-    conn = db()
+
+    conn = get_db()
 
     rows = conn.execute(
         """
-        SELECT id, title, author, category
+        SELECT
+            id,
+            title,
+            author,
+            category
         FROM books
         WHERE title LIKE ?
         OR author LIKE ?
@@ -139,7 +184,7 @@ def search_books(text):
         (
             f"%{text}%",
             f"%{text}%",
-        ),
+        )
     ).fetchall()
 
     conn.close()
@@ -148,16 +193,21 @@ def search_books(text):
 
 
 def category_books(category):
-    conn = db()
+
+    conn = get_db()
 
     rows = conn.execute(
         """
-        SELECT id, title, author, category
+        SELECT
+            id,
+            title,
+            author,
+            category
         FROM books
         WHERE category = ?
         ORDER BY id DESC
         """,
-        (category,),
+        (category,)
     ).fetchall()
 
     conn.close()
@@ -166,7 +216,8 @@ def category_books(category):
 
 
 def add_favorite(user_id, book_id):
-    conn = db()
+
+    conn = get_db()
 
     conn.execute(
         """
@@ -174,7 +225,10 @@ def add_favorite(user_id, book_id):
         (user_id, book_id)
         VALUES (?, ?)
         """,
-        (user_id, book_id),
+        (
+            user_id,
+            book_id,
+        )
     )
 
     conn.commit()
@@ -182,19 +236,23 @@ def add_favorite(user_id, book_id):
 
 
 def get_favorites(user_id):
-    conn = db()
+
+    conn = get_db()
 
     rows = conn.execute(
         """
-        SELECT books.id, books.title,
-               books.author, books.category
+        SELECT
+            books.id,
+            books.title,
+            books.author,
+            books.category
         FROM books
         JOIN favorites
         ON books.id = favorites.book_id
         WHERE favorites.user_id = ?
         ORDER BY books.id DESC
         """,
-        (user_id,),
+        (user_id,)
     ).fetchall()
 
     conn.close()
@@ -202,19 +260,21 @@ def get_favorites(user_id):
     return rows
 
 
-# =====================================================
+# ============================================================
 # STATES
-# =====================================================
+# ============================================================
 
 class SearchState(StatesGroup):
+
     waiting = State()
 
 
-# =====================================================
-# MENUS
-# =====================================================
+# ============================================================
+# KEYBOARDS
+# ============================================================
 
 def main_menu():
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -251,7 +311,8 @@ def main_menu():
     )
 
 
-def back_menu():
+def back_button():
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -265,7 +326,8 @@ def back_menu():
 
 
 def categories_menu():
-    names = [
+
+    categories = [
         "Акыда",
         "Фикх",
         "Хадисы",
@@ -277,12 +339,13 @@ def categories_menu():
 
     buttons = []
 
-    for name in names:
+    for category in categories:
+
         buttons.append(
             [
                 InlineKeyboardButton(
-                    text=f"📂 {name}",
-                    callback_data=f"category:{name}"
+                    text=f"📂 {category}",
+                    callback_data=f"category:{category}"
                 )
             ]
         )
@@ -302,6 +365,7 @@ def categories_menu():
 
 
 def book_menu(book_id):
+
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -326,72 +390,82 @@ def book_menu(book_id):
     )
 
 
-# =====================================================
+# ============================================================
 # START
-# =====================================================
+# ============================================================
 
 @dp.message(CommandStart())
 async def start(message: Message):
 
     await message.answer(
         "📚 <b>Rauda Ilm</b>\n\n"
-        "Добро пожаловать в исламскую библиотеку!\n\n"
+        "Добро пожаловать в исламскую электронную библиотеку.\n\n"
         "Выберите нужный раздел:",
         parse_mode="HTML",
         reply_markup=main_menu()
     )
 
 
-# =====================================================
+# ============================================================
 # ADMIN
-# =====================================================
+# ============================================================
 
 @dp.message(Command("admin"))
 async def admin(message: Message):
 
     if message.from_user.id != ADMIN_ID:
+
         await message.answer(
             "⛔ Доступ запрещён."
         )
+
         return
 
+    books = get_books()
+
     await message.answer(
-        "👑 Панель администратора\n\n"
+        "👑 <b>Админ-панель</b>\n\n"
+        f"📚 Книг в базе: {len(books)}\n\n"
         "Книги добавляются автоматически "
-        "через твой частный канал."
+        "из частного канала.",
+        parse_mode="HTML"
     )
 
 
-# =====================================================
-# CHANNEL
-# =====================================================
+# ============================================================
+# CHANNEL PDF
+# ============================================================
 
 @dp.channel_post()
-async def channel_post(message: Message):
+async def channel_pdf(message: Message):
 
     if message.chat.id != CHANNEL_ID:
         return
 
-    # PDF должен быть документом
     if not message.document:
         return
 
-    file_name = message.document.file_name or ""
+    document = message.document
+
+    file_name = document.file_name or ""
 
     if not file_name.lower().endswith(".pdf"):
+
+        print(
+            "Получен документ, но это не PDF:",
+            file_name
+        )
+
         return
 
-    # Текст подписи
-    text = message.caption or ""
+    caption = message.caption or ""
 
     title = "Без названия"
     author = "Не указан"
     category = "Без категории"
     description = ""
 
-    lines = text.splitlines()
-
-    for line in lines:
+    for line in caption.splitlines():
 
         if ":" not in line:
             continue
@@ -418,17 +492,17 @@ async def channel_post(message: Message):
         author=author,
         category=category,
         description=description,
-        file_id=message.document.file_id
+        file_id=document.file_id
     )
 
     print(
-        f"NEW BOOK: {book_id} | {title}"
+        f"BOOK ADDED: {book_id} | {title}"
     )
 
 
-# =====================================================
+# ============================================================
 # CATALOG
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data == "catalog")
 async def catalog(callback: CallbackQuery):
@@ -441,10 +515,11 @@ async def catalog(callback: CallbackQuery):
             "📚 <b>Каталог</b>\n\n"
             "Книг пока нет.",
             parse_mode="HTML",
-            reply_markup=back_menu()
+            reply_markup=back_button()
         )
 
         await callback.answer()
+
         return
 
     buttons = []
@@ -481,9 +556,9 @@ async def catalog(callback: CallbackQuery):
     await callback.answer()
 
 
-# =====================================================
+# ============================================================
 # BOOK
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data.startswith("book:"))
 async def show_book(callback: CallbackQuery):
@@ -500,6 +575,7 @@ async def show_book(callback: CallbackQuery):
             "Книга не найдена.",
             show_alert=True
         )
+
         return
 
     (
@@ -514,11 +590,14 @@ async def show_book(callback: CallbackQuery):
     text = (
         f"📖 <b>{title}</b>\n\n"
         f"✍️ Автор: {author}\n"
-        f"📂 Категория: {category}\n"
+        f"📂 Категория: {category}"
     )
 
     if description:
-        text += f"\n📝 {description}"
+
+        text += (
+            f"\n\n📝 {description}"
+        )
 
     await callback.message.edit_text(
         text,
@@ -529,9 +608,9 @@ async def show_book(callback: CallbackQuery):
     await callback.answer()
 
 
-# =====================================================
+# ============================================================
 # DOWNLOAD
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data.startswith("download:"))
 async def download(callback: CallbackQuery):
@@ -548,6 +627,7 @@ async def download(callback: CallbackQuery):
             "Книга не найдена.",
             show_alert=True
         )
+
         return
 
     file_id = book[5]
@@ -563,9 +643,9 @@ async def download(callback: CallbackQuery):
     await callback.answer()
 
 
-# =====================================================
+# ============================================================
 # FAVORITE
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data.startswith("favorite:"))
 async def favorite(callback: CallbackQuery):
@@ -584,9 +664,9 @@ async def favorite(callback: CallbackQuery):
     )
 
 
-# =====================================================
+# ============================================================
 # SEARCH
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data == "search")
 async def search_start(
@@ -649,9 +729,9 @@ async def search_result(
     )
 
 
-# =====================================================
+# ============================================================
 # CATEGORIES
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data == "categories")
 async def categories(callback: CallbackQuery):
@@ -670,7 +750,8 @@ async def categories(callback: CallbackQuery):
 async def category(callback: CallbackQuery):
 
     category_name = callback.data.split(
-        ":", 1
+        ":",
+        1
     )[1]
 
     books = category_books(
@@ -687,6 +768,7 @@ async def category(callback: CallbackQuery):
         )
 
         await callback.answer()
+
         return
 
     buttons = []
@@ -722,9 +804,9 @@ async def category(callback: CallbackQuery):
     await callback.answer()
 
 
-# =====================================================
-# NEW BOOKS
-# =====================================================
+# ============================================================
+# NEW
+# ============================================================
 
 @dp.callback_query(F.data == "new")
 async def new_books(callback: CallbackQuery):
@@ -735,10 +817,11 @@ async def new_books(callback: CallbackQuery):
 
         await callback.message.edit_text(
             "🆕 Новинок пока нет.",
-            reply_markup=back_menu()
+            reply_markup=back_button()
         )
 
         await callback.answer()
+
         return
 
     buttons = []
@@ -774,9 +857,9 @@ async def new_books(callback: CallbackQuery):
     await callback.answer()
 
 
-# =====================================================
+# ============================================================
 # FAVORITES
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data == "favorites")
 async def favorites(callback: CallbackQuery):
@@ -791,10 +874,11 @@ async def favorites(callback: CallbackQuery):
             "⭐ <b>Избранное</b>\n\n"
             "Здесь пока ничего нет.",
             parse_mode="HTML",
-            reply_markup=back_menu()
+            reply_markup=back_button()
         )
 
         await callback.answer()
+
         return
 
     buttons = []
@@ -830,9 +914,9 @@ async def favorites(callback: CallbackQuery):
     await callback.answer()
 
 
-# =====================================================
+# ============================================================
 # ABOUT
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data == "about")
 async def about(callback: CallbackQuery):
@@ -845,15 +929,15 @@ async def about(callback: CallbackQuery):
         "📂 Категории\n"
         "⭐ Избранное",
         parse_mode="HTML",
-        reply_markup=back_menu()
+        reply_markup=back_button()
     )
 
     await callback.answer()
 
 
-# =====================================================
+# ============================================================
 # HOME
-# =====================================================
+# ============================================================
 
 @dp.callback_query(F.data == "home")
 async def home(callback: CallbackQuery):
@@ -868,68 +952,47 @@ async def home(callback: CallbackQuery):
     await callback.answer()
 
 
-# =====================================================
-# RENDER HTTP SERVER
-# =====================================================
+# ============================================================
+# WEBHOOK
+# ============================================================
 
 async def health(request):
-    return web.Response(text="OK")
 
-
-async def start_web_server():
-
-    app = web.Application()
-
-    app.router.add_get(
-        "/",
-        health
+    return web.Response(
+        text="Rauda Ilm bot is running"
     )
 
-    app.router.add_get(
-        "/healthz",
-        health
-    )
 
-    runner = web.AppRunner(app)
+async def webhook(request):
 
-    await runner.setup()
+    try:
 
-    port = int(
-        os.getenv(
-            "PORT",
-            "10000"
+        data = await request.json()
+
+        update = Update.model_validate(data)
+
+        await dp.feed_update(
+            bot,
+            update
         )
-    )
 
-    site = web.TCPSite(
-        runner,
-        "0.0.0.0",
-        port
-    )
+        return web.Response(
+            text="OK"
+        )
 
-    await site.start()
+    except Exception as e:
 
-    print(
-        f"HTTP server started on port {port}"
-    )
+        print(
+            "Webhook error:",
+            repr(e)
+        )
 
-
-# =====================================================
-# START
-# =====================================================
-
-async def main():
-
-    init_db()
-
-    await start_web_server()
-
-    print(
-        "Rauda Ilm bot started!"
-    )
-
-    await dp.start_polling(bot)
+        return web.Response(
+            status=500,
+            text="ERROR"
+        )
 
 
-if __name__ == "__main__":
-    asyncio.run(main())
+async def setup_webhook():
+
+    await bot.set_
