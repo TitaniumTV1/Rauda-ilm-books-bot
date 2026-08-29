@@ -1,7 +1,7 @@
 import os
 import asyncio
 from aiohttp import web
-from aiogram import Bot, Dispatcher, types, F
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import CommandStart, Command
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 
@@ -15,11 +15,7 @@ bot = Bot(token=TOKEN)
 dp = Dispatcher()
 
 
-# =========================
-# КЛАВИАТУРЫ
-# =========================
-
-def main_menu():
+def menu():
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
@@ -38,121 +34,95 @@ def main_menu():
     )
 
 
-def admin_menu():
+def back_button():
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                InlineKeyboardButton(text="➕ Добавить книгу", callback_data="add_book")
-            ],
-            [
-                InlineKeyboardButton(text="📚 Все книги", callback_data="admin_books"),
-                InlineKeyboardButton(text="📊 Статистика", callback_data="stats"),
-            ],
-            [
-                InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")
-            ],
+            [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")]
         ]
     )
 
 
-# =========================
-# START
-# =========================
+def admin_menu():
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [InlineKeyboardButton(text="➕ Добавить книгу", callback_data="add_book")],
+            [InlineKeyboardButton(text="📚 Все книги", callback_data="admin_books")],
+            [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
+            [InlineKeyboardButton(text="⬅️ Главное меню", callback_data="home")],
+        ]
+    )
+
 
 @dp.message(CommandStart())
-async def start(message: types.Message):
-    text = (
-        "📚 <b>Rauda Ilm</b>\n"
-        "Исламская библиотека\n\n"
-        "Добро пожаловать!\n"
-        "Выберите нужный раздел:"
+async def start(message):
+    await message.answer(
+        "📚 <b>Rauda Ilm</b>\n\n"
+        "Добро пожаловать в исламскую библиотеку!\n\n"
+        "Выберите раздел:",
+        parse_mode="HTML",
+        reply_markup=menu()
     )
+
+
+@dp.message(Command("admin"))
+async def admin(message):
+    if message.from_user.id != ADMIN_ID:
+        await message.answer("⛔ Доступ запрещён.")
+        return
 
     await message.answer(
-        text,
+        "👑 <b>Панель администратора</b>",
         parse_mode="HTML",
-        reply_markup=main_menu()
+        reply_markup=admin_menu()
     )
 
 
-# =========================
-# ГЛАВНОЕ МЕНЮ
-# =========================
-
 @dp.callback_query(F.data == "home")
-async def home(callback: types.CallbackQuery):
+async def home(callback):
     await callback.message.edit_text(
         "📚 <b>Rauda Ilm</b>\n\nВыберите раздел:",
         parse_mode="HTML",
-        reply_markup=main_menu()
+        reply_markup=menu()
     )
     await callback.answer()
 
-
-# =========================
-# КАТАЛОГ
-# =========================
 
 @dp.callback_query(F.data == "catalog")
-async def catalog(callback: types.CallbackQuery):
+async def catalog(callback):
     await callback.message.edit_text(
         "📚 <b>Каталог</b>\n\n"
-        "Пока библиотека пуста.\n\n"
+        "Библиотека пока пуста.\n"
         "Скоро здесь появятся книги.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")]
-            ]
-        )
+        reply_markup=back_button()
     )
     await callback.answer()
 
-
-# =========================
-# ПОИСК
-# =========================
 
 @dp.callback_query(F.data == "search")
-async def search(callback: types.CallbackQuery):
+async def search(callback):
     await callback.message.edit_text(
-        "🔎 <b>Поиск книг</b>\n\n"
-        "Функция поиска будет подключена следующим этапом.",
+        "🔎 <b>Поиск</b>\n\n"
+        "Поиск книг подключим следующим этапом.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")]
-            ]
-        )
+        reply_markup=back_button()
     )
     await callback.answer()
 
-
-# =========================
-# НОВИНКИ
-# =========================
 
 @dp.callback_query(F.data == "new")
-async def new_books(callback: types.CallbackQuery):
+async def new_books(callback):
     await callback.message.edit_text(
-        "🆕 <b>Новые книги</b>\n\n"
-        "Пока новых книг нет.",
+        "🆕 <b>Новинки</b>\n\n"
+        "Новых книг пока нет.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")]
-            ]
-        )
+        reply_markup=back_button()
     )
     await callback.answer()
 
 
-# =========================
-# КАТЕГОРИИ
-# =========================
-
 @dp.callback_query(F.data == "categories")
-async def categories(callback: types.CallbackQuery):
+async def categories(callback):
     await callback.message.edit_text(
         "📂 <b>Категории</b>\n\n"
         "🕌 Акыда\n"
@@ -163,62 +133,53 @@ async def categories(callback: types.CallbackQuery):
         "📚 Манхадж\n"
         "🗣 Арабский язык",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")]
-            ]
-        )
+        reply_markup=back_button()
     )
     await callback.answer()
 
-
-# =========================
-# ИЗБРАННОЕ
-# =========================
 
 @dp.callback_query(F.data == "favorites")
-async def favorites(callback: types.CallbackQuery):
+async def favorites(callback):
     await callback.message.edit_text(
         "⭐ <b>Избранное</b>\n\n"
-        "Здесь будут сохранённые пользователем книги.",
+        "Раздел пока пуст.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")]
-            ]
-        )
+        reply_markup=back_button()
     )
     await callback.answer()
 
-
-# =========================
-# О БИБЛИОТЕКЕ
-# =========================
 
 @dp.callback_query(F.data == "about")
-async def about(callback: types.CallbackQuery):
+async def about(callback):
     await callback.message.edit_text(
         "ℹ️ <b>О библиотеке</b>\n\n"
-        "Rauda Ilm — электронная библиотека исламских книг.\n\n"
-        "📚 Книги\n"
-        "🔎 Поиск\n"
-        "📂 Категории\n"
-        "⭐ Избранное",
+        "Rauda Ilm — электронная библиотека исламских книг.",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="⬅️ Назад", callback_data="home")]
-            ]
-        )
+        reply_markup=back_button()
     )
     await callback.answer()
 
 
-# =========================
-# АДМИН-ПАНЕЛЬ
-# =========================
+@dp.callback_query(F.data == "add_book")
+async def add_book(callback):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
 
-@dp.message(Command("admin"))
-async def admin(message: types.Message):
-    if message.from_user.id != ADMIN_ID:
-        await
+    await callback.message.answer(
+        "➕ Добавление книг подключим следующим этапом."
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "admin_books")
+async def admin_books(callback):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+
+    await callback.message.answer("📚 Книг пока нет.")
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "stats
