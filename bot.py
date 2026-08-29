@@ -182,4 +182,45 @@ async def admin_books(callback):
     await callback.answer()
 
 
-@dp.callback_query(F.data == "stats
+@dp.callback_query(F.data == "stats")
+async def stats(callback):
+    if callback.from_user.id != ADMIN_ID:
+        await callback.answer("⛔ Доступ запрещён.", show_alert=True)
+        return
+
+    await callback.message.answer(
+        "📊 <b>Статистика</b>\n\n"
+        "📚 Книг: 0\n"
+        "👤 Пользователей: 0",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
+
+async def health(request):
+    return web.Response(text="OK")
+
+
+async def start_web():
+    app = web.Application()
+    app.router.add_get("/", health)
+    app.router.add_get("/healthz", health)
+
+    runner = web.AppRunner(app)
+    await runner.setup()
+
+    port = int(os.getenv("PORT", "10000"))
+    site = web.TCPSite(runner, "0.0.0.0", port)
+    await site.start()
+
+    print(f"HTTP server started on port {port}")
+
+
+async def main():
+    await start_web()
+    print("Rauda Ilm bot started!")
+    await dp.start_polling(bot)
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
